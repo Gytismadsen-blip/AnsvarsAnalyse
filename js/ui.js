@@ -16,10 +16,11 @@ const GRUPPE_OVERSKRIFT = {
   "lovvalg-koeb": "CISG eller Købeloven?",
   "transportform": "Hvilken transportlov gælder?",
   "aftalegrundlag": "Er NSAB aftalt?",
-  "specialflag": "Særlige forhold"
+  "specialflag": "Særlige forhold",
+  "tal": "Tal til beregningen"
 };
 
-const GRUPPE_RAEKKEFOELGE = ["parter", "omraade", "lovvalg-koeb", "transportform", "aftalegrundlag", "specialflag"];
+const GRUPPE_RAEKKEFOELGE = ["parter", "omraade", "lovvalg-koeb", "transportform", "aftalegrundlag", "specialflag", "tal"];
 
 const LOV_OPTIONS = [
   { value: "SOELOVEN", label: "Sølovens kapitel 13" },
@@ -96,12 +97,19 @@ function wireFileUpload() {
 }
 
 async function haandterFil(fil) {
+  const dropzone = document.getElementById("dropzone");
+  const oprindeligTekst = dropzone.firstChild ? dropzone.firstChild.textContent : "";
+  dropzone.classList.add("opacity-60");
+  if (dropzone.firstChild) dropzone.firstChild.textContent = `Læser "${fil.name}" …`;
   try {
     const tekst = await laesFil(fil);
     document.getElementById("caseText").value = tekst;
     koerAnalyse();
   } catch (err) {
     alert("Kunne ikke læse filen: " + err.message);
+  } finally {
+    dropzone.classList.remove("opacity-60");
+    if (dropzone.firstChild) dropzone.firstChild.textContent = oprindeligTekst;
   }
 }
 
@@ -246,16 +254,30 @@ function renderAnsvar() {
   }
 }
 
+function udtraektTal(id) {
+  const f = state.fund.find(f => f.id === id && f.valgt);
+  if (!f) return null;
+  const tal = parseFloat(String(f.vaerdi).replace(/[^\d.,]/g, "").replace(/\./g, "").replace(",", "."));
+  return isNaN(tal) ? null : tal;
+}
+
 function renderBeregningForm(hovedlov) {
   const container = document.getElementById("beregningInput");
-  const gemte = state.beregningInputs || {};
+  const foreslaaet = !state.beregningInputs ? {
+    vaegtKg: udtraektTal("tal-vaegt"),
+    antalKolli: udtraektTal("tal-kolli"),
+    faktiskTab: udtraektTal("tal-tab")
+  } : {};
+  const gemte = state.beregningInputs || foreslaaet;
   const lovValgt = gemte.lov || hovedlov || "SOELOVEN";
 
   const options = LOV_OPTIONS
     .map(o => `<option value="${o.value}" ${o.value === lovValgt ? "selected" : ""}>${o.label}</option>`)
     .join("");
 
+  const harForslag = foreslaaet.vaegtKg != null || foreslaaet.antalKolli != null || foreslaaet.faktiskTab != null;
   container.innerHTML = `
+    ${harForslag ? '<p class="col-span-2 text-xs text-blue-300">Felter er foreslået ud fra tal fundet i casen (fane 1) — tjek dem, de kan være forkerte.</p>' : ""}
     <div>
       <label class="block text-gray-400 mb-1">Lov</label>
       <select id="inputLov" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">${options}</select>

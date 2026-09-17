@@ -109,12 +109,20 @@ function udtraekParter(tekst) {
     }
   }
 
-  const transpRegex = /(?:transportvirksomheden|speditøren|speditør|fragtføreren|rederiet|kontraherende transportør)\s+([A-ZÆØÅ][\wÆØÅæøå&.\- ]{1,40})/i;
-  const transp = tekst.match(transpRegex);
-  if (transp) {
-    const navn = transp[1].trim().replace(/[,.]$/, "");
-    fund.push(nytFund("transportoer-navn", "parter", "Transportørens/speditørens navn", navn,
-      findSignal(new RegExp(escapeRegex(transp[0])), tekst)?.citat, `Fundet ud fra formuleringen "${transp[0].trim()}" — bekræft selv at navnet er korrekt.`));
+  // OBS: nøgleordet skal findes UAFHÆNGIGT af store/små bogstaver (/i), men det navn der
+  // følger efter skal KRÆVE stort begyndelsesbogstav (uden /i) for reelt at virke som et
+  // filter for egennavne — ellers matcher [A-ZÆØÅ] også små bogstaver pga. /i-flaget.
+  const transpNoegleordRegex = /(?:transportvirksomheden|speditøren|speditør|fragtføreren|rederiet|kontraherende transportør)/i;
+  const transpNoegleord = tekst.match(transpNoegleordRegex);
+  if (transpNoegleord) {
+    const restTekst = tekst.slice(transpNoegleord.index + transpNoegleord[0].length);
+    const navnMatch = restTekst.match(/^\s+([A-ZÆØÅ][^\n.,]{0,40}?)(?=[.,\n]|\s+(?:at|og|som|der|skal|er|har|til)\s|$)/);
+    if (navnMatch) {
+      const navn = navnMatch[1].trim();
+      const heleFundet = transpNoegleord[0] + navnMatch[0];
+      fund.push(nytFund("transportoer-navn", "parter", "Transportørens/speditørens navn", navn,
+        findSignal(new RegExp(escapeRegex(heleFundet)), tekst)?.citat, `Fundet ud fra formuleringen "${heleFundet.trim()}" — bekræft selv at navnet er korrekt.`));
+    }
   }
 
   return fund;
@@ -124,11 +132,66 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Dansk taltekst bruger "." som tusindtalsseparator og "," som decimal — modsat engelsk.
+function parseDanskTal(str) {
+  if (!str) return null;
+  const tal = parseFloat(str.replace(/\./g, "").replace(",", "."));
+  return isNaN(tal) ? null : tal;
+}
+
+// Finder vægt/beløb/antal-skadet i casen, så beregningsfelterne på fane 3 kan foreslås
+// automatisk i stedet for at brugeren altid selv skal taste dem ind. Rent regex-baseret
+// gæt — vises som almindelige fund med citat, som brugeren selv skal godkende.
+function udtraekTal(tekst, checklist) {
+  const fund = [];
+
+  const valutaSignal = findSignal(/€|\$|(?<![A-Za-zæøå])(?:USD|EUR|GBP)(?![A-Za-zæøå])|\bdollar\b|\beuro\b/i, tekst);
+  if (valutaSignal) {
+    checklist.push({ tekst: "Anden valuta end kr. fundet", status: "mangler",
+      note: `Teksten nævner muligvis en anden valuta ("${valutaSignal.match}") — omregn selv til kr. før du bruger beløbet i beregningen.` });
+  }
+
+  const vaegtPrStkM = tekst.match(/([\d.,]+)\s*kg[\s.]*(?:pr\.?|\/)\s*stk/i);
+  const kroPrStkM = tekst.match(/([\d.,]+)\s*kr\.?[\s.]*(?:pr\.?|\/)\s*stk/i);
+  const antalSkadetM = tekst.match(/(\d+)\s+[a-zæøåA-ZÆØÅ]+\s+(?:er\s+)?(?:væltet|beskadiget|ødelagt|totalskadet|gået i stykker|skadet)/i);
+  const vaegtDirekteM = tekst.match(/vejer\s+([\d.,]+)\s*(kg|ton)/i);
+  const vaerdiDirekteM = tekst.match(/(?:værdi(?:en)? p[åa]|koste[rn]?)\s*(?:ca\.?\s*)?([\d.,]+)\s*kr/i);
+
+  const antalSkadet = antalSkadetM ? parseInt(antalSkadetM[1], 10) : null;
+  const vaegtPrStk = parseDanskTal(vaegtPrStkM && vaegtPrStkM[1]);
+  const kroPrStk = parseDanskTal(kroPrStkM && kroPrStkM[1]);
+
+  if (antalSkadet && vaegtPrStk) {
+    const totalVaegt = antalSkadet * vaegtPrStk;
+    fund.push(nytFund("tal-vaegt", "tal", "Samlet vægt (beregnet)", `${totalVaegt} kg`,
+      `${antalSkadetM[0]} … ${vaegtPrStkM[0]}`, `${antalSkadet} stk. × ${vaegtPrStk} kg/stk. = ${totalVaegt} kg.`));
+    fund.push(nytFund("tal-kolli", "tal", "Antal kolli (beregnet)", `${antalSkadet}`,
+      antalSkadetM[0], "Antaget at hvert beskadiget stk. tæller som ét kollo — bekræft selv."));
+  } else if (vaegtDirekteM) {
+    let totalVaegt = parseDanskTal(vaegtDirekteM[1]);
+    if (/ton/i.test(vaegtDirekteM[2])) totalVaegt *= 1000;
+    fund.push(nytFund("tal-vaegt", "tal", "Samlet vægt", `${totalVaegt} kg`,
+      vaegtDirekteM[0], "Vægt fundet direkte i teksten."));
+  }
+
+  if (antalSkadet && kroPrStk) {
+    const totalTab = antalSkadet * kroPrStk;
+    fund.push(nytFund("tal-tab", "tal", "Faktisk tab (beregnet)", `${totalTab} kr.`,
+      `${antalSkadetM[0]} … ${kroPrStkM[0]}`, `${antalSkadet} stk. × ${kroPrStk} kr./stk. = ${totalTab} kr.`));
+  } else if (vaerdiDirekteM) {
+    fund.push(nytFund("tal-tab", "tal", "Faktisk tab", `${parseDanskTal(vaerdiDirekteM[1])} kr.`,
+      vaerdiDirekteM[0], "Beløb fundet direkte i teksten — bekræft selv at det er DETTE tab, og ikke fx den fulde ordreværdi."));
+  }
+
+  return fund;
+}
+
 function klassificerCase(tekst) {
   const fund = [];
   const checklist = [];
 
   fund.push(...udtraekParter(tekst));
+  fund.push(...udtraekTal(tekst, checklist));
 
   // --- TRIN 1: Køberet eller transportret? ---
   const koeberetSignal = findSignal(/sælger|køber|levering|risikoens overgang|mangel|reklamation/i, tekst);
@@ -195,7 +258,9 @@ function klassificerCase(tekst) {
   const soeSignal = findSignal(/\bskib\b|rederi|\bMSC\b|Maersk|CMA-?CGM|container.{0,20}ombord|konnossement|\bB\/L\b|sejles|lastehavn|lossehavn|\bhavn\b/i, tekst);
   const landevejSignal = findSignal(/lastbil|vognmand|chauffør|landevej|trailer|CMR[- ]?fragtbrev|CMR[- ]?brev/i, tekst);
   const flySignal = findSignal(/\bfly\b|luftfragtbrev|\bAWB\b/i, tekst);
-  const togSignal = findSignal(/jernbane|tog(?!vogn)/i, tekst);
+  // "tog" er datid af udsagnsordet "at tage" (meget almindeligt) og bruges IKKE alene —
+  // det ville fx fejlagtigt matche "modtog". Kun "jernbane" bruges som togsignal.
+  const togSignal = findSignal(/jernbane/i, tekst);
 
   if (soeSignal) {
     fund.push(nytFund("soeloven", "transportform", "Søtransport → Sølovens kapitel 13", "Sølovens kapitel 13",
@@ -238,6 +303,25 @@ function klassificerCase(tekst) {
     checklist.push({ tekst: "Transportform", status: "mangler", note: "Der ser ud til at være en transportør involveret, men appen kunne ikke se hvilken transportform (skib/lastbil/fly/tog) — vælg selv." });
   }
 
+  // --- Respekter en eksplicit "tages udgangspunkt i X"-instruks i opgaveteksten ---
+  // Set i "opgave NSAB"-casen (PH Thomsen): opgaven nævner Tyskland i forbindelse med en
+  // HELT ANDEN ordre end den beskadigede sending, hvilket narrer den generelle
+  // landegenkendelse til fejlagtigt at tro sagen er international. Når opgaven selv siger
+  // hvilken lov der skal bruges, vejer det tungere end et land-gæt hen over hele teksten.
+  const udgangspunktM = tekst.match(/tages\s+udgangspunkt\s+i\s+(NSAB(?:\s*2015)?|CMR-loven|S[øo]lovens?(?:\s+kapitel\s+13)?|K[øo]beloven|CISG)/i);
+  if (udgangspunktM && /NSAB/i.test(udgangspunktM[1])) {
+    const cmrIndex = fund.findIndex(f => f.id === "cmr");
+    if (cmrIndex !== -1) {
+      fund.splice(cmrIndex, 1);
+      fund.push(nytFund("nsab-national", "transportform", "NSAB 2015 (opgaveteksten angiver det selv)", "NSAB 2015",
+        findSignal(new RegExp(escapeRegex(udgangspunktM[0])), tekst)?.citat,
+        "Opgaveteksten angiver selv at der skal tages udgangspunkt i NSAB 2015 — det vejer tungere end en automatisk landegenkendelse, som kan blive forvirret hvis casen nævner flere forskellige forsendelser/lande.",
+        ["NSAB:§21"]));
+      checklist.push({ tekst: "Lovvalg overstyret af opgavens egen instruks", status: "mangler",
+        note: `Fandt "${udgangspunktM[0]}" i teksten — det automatiske CMR-gæt er derfor fjernet igen. Bekræft selv at NSAB 2015 er korrekt.` });
+    }
+  }
+
   // --- TRIN 4: Er NSAB aftalt? ---
   const nsabSignal = findSignal(/NSAB|Nordisk Speditørforbund|Danske Speditører/i, tekst);
   if (nsabSignal) {
@@ -249,7 +333,10 @@ function klassificerCase(tekst) {
   }
 
   // --- TRIN 5: Særlige flag ---
-  const dyrSignal = findSignal(/levende dyr|\bfår\b|kvæg|heste|husdyr|avlsdyr/i, tekst);
+  // "får" er også nutid af udsagnsordet "at få" (meget almindeligt, fx "chaufføren får
+  // dokumenterne") — kræv derfor et forudgående tal eller en entydig substantivform
+  // (fåret/fårene), ikke det bare ord "får".
+  const dyrSignal = findSignal(/levende dyr|\bfåret\b|\bfårene\b|\d+\s*får\b|kvæg|heste|husdyr|avlsdyr/i, tekst);
   if (dyrSignal) {
     fund.push(nytFund("levende-dyr", "specialflag", "Levende dyr", "Særlig fritagelsesregel kan være i spil",
       dyrSignal.citat, "Levende dyr transporteret — tjek Sølovens §277 / CMR-lovens §25 stk. 1 litra f. Fritagelsen kræver at transportøren har fulgt givne instrukser; tekniske udstyrsfejl (fx svigtende vanding) tæller normalt IKKE som en 'særlig risiko ved levende dyr'.",
