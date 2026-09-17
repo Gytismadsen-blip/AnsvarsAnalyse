@@ -6,7 +6,12 @@
 // vejledende besvarelser (Furs and Feathers, Jack Jeans, GPE m.fl.) og lovteksterne
 // (Købeloven, CISG, Sølovens kap. 13, CMR-loven, NSAB 2015).
 
-const NORDISKE_LANDE = ["danmark", "dansk", "sverige", "svensk", "norge", "norsk", "finland", "finsk", "island", "islandsk"];
+// Danmark holdes ADSKILT fra de øvrige nordiske lande: i disse cases er Danmark næsten
+// altid nævnt som hjemland, så det duer ikke som signal for at "modparten er nordisk".
+// Det nordiske forbehold (CISG art. 94) er kun relevant hvis modparten er i ET ANDET
+// nordisk land end Danmark (fx Sverige) — ikke bare fordi Danmark nævnes.
+const DANMARK_ORD = ["danmark", "dansk"];
+const NORDISKE_LANDE_UDEN_DK = ["sverige", "svensk", "norge", "norsk", "finland", "finsk", "island", "islandsk"];
 const SAERLANDE_UDEN_CISG = ["grønland", "grønlandsk", "færøerne", "færøsk"];
 const ANDRE_LANDE = [
   "tyskland", "tysk", "portugal", "portugisisk", "spanien", "spansk", "england", "engelsk",
@@ -28,8 +33,9 @@ function findSignal(regex, tekst, kontekst = 50) {
 
 function findAlleLande(tekst) {
   const t = tekst.toLowerCase();
-  const fundet = { nordisk: [], saer: [], andre: [] };
-  for (const ord of NORDISKE_LANDE) if (t.includes(ord)) fundet.nordisk.push(ord);
+  const fundet = { danmark: [], nordisk: [], saer: [], andre: [] };
+  for (const ord of DANMARK_ORD) if (t.includes(ord)) fundet.danmark.push(ord);
+  for (const ord of NORDISKE_LANDE_UDEN_DK) if (t.includes(ord)) fundet.nordisk.push(ord);
   for (const ord of SAERLANDE_UDEN_CISG) if (t.includes(ord)) fundet.saer.push(ord);
   for (const ord of ANDRE_LANDE) if (t.includes(ord)) fundet.andre.push(ord);
   return fundet;
@@ -71,17 +77,20 @@ function klassificerCase(tekst) {
       return sig ? sig.citat : null;
     };
 
+    // Rækkefølgen betyder noget: Danmark nævnes næsten altid (som hjemland) og må IKKE
+    // i sig selv udløse "nordisk forbehold" — kun hvis modparten er i et ANDET nordisk
+    // land (Sverige/Norge/Finland/Island), og der IKKE også er et ikke-nordisk land i spil.
     if (lande.saer.length > 0) {
       fund.push(nytFund("kbl-groenland", "lovvalg-koeb", "Købeloven (ikke CISG)", "Købeloven",
         landeCitat(lande.saer), `Grønland/Færøerne nævnt — disse anses IKKE for kontraherende stater efter CISG art. 93 stk. 3, selvom handlen er international.`,
         ["Art. 93", "§17"]));
-    } else if (lande.andre.length > 0 && lande.nordisk.length === 0) {
+    } else if (lande.andre.length > 0) {
       fund.push(nytFund("cisg", "lovvalg-koeb", "CISG (kandidat)", "CISG",
-        landeCitat(lande.andre), `Parterne ser ud til at have forretningssted i forskellige, ikke-nordiske lande (${lande.andre.slice(0,2).join(", ")}) — bekræft selv at det faktisk er PARTERNES hjemland (og ikke bare fx et leveringssted/en havn), og at mindst én er kontraherende stat.`,
+        landeCitat(lande.andre), `Et ikke-nordisk land er nævnt i teksten (${lande.andre.slice(0,2).join(", ")}) — bekræft selv at det faktisk er PARTERNES hjemland (og ikke bare fx et leveringssted/en havn), og at mindst én af parterne er i en kontraherende CISG-stat.`,
         ["Art. 1", "Art. 66-70"]));
-    } else if (lande.andre.length > 0 && lande.nordisk.length > 0) {
+    } else if (lande.nordisk.length > 0) {
       fund.push(nytFund("kbl-nordisk", "lovvalg-koeb", "Købeloven (nordisk forbehold)", "Købeloven",
-        landeCitat(lande.nordisk), "Handel mellem nordiske lande — det nordiske forbehold (CISG art. 94) betyder at Købeloven bruges i stedet for CISG.",
+        landeCitat(lande.nordisk), "Kun nordiske lande nævnt ud over Danmark — det nordiske forbehold (CISG art. 94) betyder at Købeloven bruges i stedet for CISG.",
         ["Art. 94", "§17"]));
     } else {
       fund.push(nytFund("kbl-national", "lovvalg-koeb", "Købeloven (national handel)", "Købeloven",
@@ -110,7 +119,7 @@ function klassificerCase(tekst) {
 
   if (landevejSignal) {
     const lande = findAlleLande(tekst);
-    const antalForskelligeLande = (lande.nordisk.length > 0 ? 1 : 0) + (lande.andre.length > 0 ? 1 : 0) + (lande.saer.length > 0 ? 1 : 0);
+    const antalForskelligeLande = (lande.danmark.length > 0 ? 1 : 0) + (lande.nordisk.length > 0 ? 1 : 0) + (lande.andre.length > 0 ? 1 : 0) + (lande.saer.length > 0 ? 1 : 0);
     if (antalForskelligeLande >= 2) {
       fund.push(nytFund("cmr", "transportform", "International landevejstransport → CMR-loven", "CMR-loven",
         landevejSignal.citat, "Lastbiltransport nævnt, og flere lande er identificeret i teksten — CMR-loven gælder kun international vejtransport (§1).",
