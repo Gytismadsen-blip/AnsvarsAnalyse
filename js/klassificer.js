@@ -5,6 +5,11 @@
 // Beslutningstræet er bygget ud fra en gennemgang af Transportjura-undervisningens
 // vejledende besvarelser (Furs and Feathers, Jack Jeans, GPE m.fl.) og lovteksterne
 // (Købeloven, CISG, Sølovens kap. 13, CMR-loven, NSAB 2015).
+//
+// Hver paragrafhenvisning er skrevet som "LOVKODE:§X" (fx "CMR:§24") og ALDRIG som
+// bare "§24" — flere love bruger samme paragrafnummer (fx både Købeloven og CMR-loven
+// har en §24 med helt forskelligt indhold), så uden lov-præfiks vil et opslag i
+// LOVDATA gætte forkert og vise den forkerte lovs tekst.
 
 // Danmark holdes ADSKILT fra de øvrige nordiske lande: i disse cases er Danmark næsten
 // altid nævnt som hjemland, så det duer ikke som signal for at "modparten er nordisk".
@@ -17,8 +22,39 @@ const ANDRE_LANDE = [
   "tyskland", "tysk", "portugal", "portugisisk", "spanien", "spansk", "england", "engelsk",
   "storbritannien", "frankrig", "fransk", "holland", "nederlandene", "belgien", "belgisk",
   "italien", "italiensk", "polen", "polsk", "usa", "kina", "kinesisk", "litauen", "tjekkiet",
-  "østrig", "schweiz", "irland", "dublin"
+  "østrig", "schweiz", "irland"
 ];
+
+// Caseteksterne bruger typisk BYNAVNE, ikke landenavne (fx "fra Hamborg til Aalborg"
+// nævner aldrig "Tyskland"/"Danmark" direkte). Uden dette opslag tror motoren at der
+// slet ikke er noget land i spil, og gætter forkert på national transport.
+const BY_TIL_LAND = {
+  "aalborg": "danmark", "århus": "danmark", "aarhus": "danmark", "københavn": "danmark", "kobenhavn": "danmark",
+  "odense": "danmark", "esbjerg": "danmark", "horsens": "danmark", "vejle": "danmark", "kolding": "danmark",
+  "fredericia": "danmark", "padborg": "danmark", "brønderslev": "danmark", "bronderslev": "danmark",
+  "randers": "danmark", "herning": "danmark", "silkeborg": "danmark", "roskilde": "danmark",
+  "hørby": "danmark", "horby": "danmark", "bøvlinghøj": "danmark", "bovlinghoj": "danmark",
+  "nuuk": "grønland",
+  "hamborg": "tyskland", "hamburg": "tyskland", "bremerhaven": "tyskland", "bremen": "tyskland",
+  "berlin": "tyskland", "münchen": "tyskland", "munchen": "tyskland", "frankfurt": "tyskland", "köln": "tyskland",
+  "valencia": "spanien", "madrid": "spanien", "barcelona": "spanien",
+  "sines": "portugal", "lissabon": "portugal", "porto": "portugal",
+  "antwerpen": "belgien", "bruxelles": "belgien",
+  "dublin": "irland",
+  "stockholm": "sverige", "göteborg": "sverige", "goteborg": "sverige", "malmö": "sverige", "malmo": "sverige",
+  "oslo": "norge", "bergen": "norge",
+  "helsinki": "finland"
+};
+
+// Hvilken "kategori" (samme inddeling som findAlleLande bruger) et land hører til.
+const LAND_KATEGORI = {
+  danmark: "danmark",
+  grønland: "saer",
+  sverige: "nordisk", norge: "nordisk", finland: "nordisk", island: "nordisk",
+  tyskland: "andre", spanien: "andre", portugal: "andre", belgien: "andre", irland: "andre",
+  england: "andre", frankrig: "andre", italien: "andre", polen: "andre", usa: "andre", kina: "andre",
+  litauen: "andre", tjekkiet: "andre", østrig: "andre", schweiz: "andre", storbritannien: "andre"
+};
 
 function findSignal(regex, tekst, kontekst = 50) {
   const m = tekst.match(regex);
@@ -33,11 +69,20 @@ function findSignal(regex, tekst, kontekst = 50) {
 
 function findAlleLande(tekst) {
   const t = tekst.toLowerCase();
-  const fundet = { danmark: [], nordisk: [], saer: [], andre: [] };
+  const fundet = { danmark: [], nordisk: [], saer: [], andre: [], byGaet: [] };
   for (const ord of DANMARK_ORD) if (t.includes(ord)) fundet.danmark.push(ord);
   for (const ord of NORDISKE_LANDE_UDEN_DK) if (t.includes(ord)) fundet.nordisk.push(ord);
   for (const ord of SAERLANDE_UDEN_CISG) if (t.includes(ord)) fundet.saer.push(ord);
   for (const ord of ANDRE_LANDE) if (t.includes(ord)) fundet.andre.push(ord);
+
+  for (const by in BY_TIL_LAND) {
+    if (!t.includes(by)) continue;
+    const land = BY_TIL_LAND[by];
+    const kategori = LAND_KATEGORI[land];
+    if (!kategori || fundet[kategori].includes(by)) continue;
+    fundet[kategori].push(by);
+    fundet.byGaet.push(`${by[0].toUpperCase()}${by.slice(1)} → ${land[0].toUpperCase()}${land.slice(1)}`);
+  }
   return fundet;
 }
 
@@ -45,9 +90,45 @@ function nytFund(id, gruppe, label, vaerdi, citat, begrundelse, paragraffer = []
   return { id, gruppe, label, vaerdi, citat: citat || null, begrundelse, paragraffer, valgt: true };
 }
 
+// Finder navnene på sagsøger/sagsøgt/transportør ud fra typiske vendinger i caseteksterne
+// (fx "X gør indsigelse mod Y" eller "transportvirksomheden Y"). Rent regex-baseret gæt —
+// derfor et almindeligt fund med citat, som brugeren selv skal godkende/rette.
+function udtraekParter(tekst) {
+  const fund = [];
+
+  const kravRegex = /([A-ZÆØÅ][\wÆØÅæøå .&-]{1,40}?)\s+(?:gør indsigelse|reklamerer|rejser (?:et )?(?:krav|erstatningskrav)|kræver erstatning|søger (?:om )?(?:fuld )?erstatning|sagsøger)\s*(?:mod|imod|hos|fra)?\s*([A-ZÆØÅ][\wÆØÅæøå .&-]{1,40})?/;
+  const krav = tekst.match(kravRegex);
+  if (krav) {
+    const sagsoeger = krav[1].trim();
+    const sagsoegteRaa = krav[2] ? krav[2].trim().replace(/[,.]$/, "") : null;
+    fund.push(nytFund("sagsoeger", "parter", "Rejser kravet (sagsøger)", sagsoeger,
+      findSignal(new RegExp(escapeRegex(krav[0])), tekst)?.citat, `Fundet ud fra formuleringen "${krav[0].trim()}" — bekræft selv at navnet er korrekt.`));
+    if (sagsoegteRaa) {
+      fund.push(nytFund("sagsoegte", "parter", "Kravet rettes mod (sagsøgte)", sagsoegteRaa,
+        findSignal(new RegExp(escapeRegex(krav[0])), tekst)?.citat, `Fundet ud fra formuleringen "${krav[0].trim()}" — bekræft selv at navnet er korrekt.`));
+    }
+  }
+
+  const transpRegex = /(?:transportvirksomheden|speditøren|speditør|fragtføreren|rederiet|kontraherende transportør)\s+([A-ZÆØÅ][\wÆØÅæøå&.\- ]{1,40})/i;
+  const transp = tekst.match(transpRegex);
+  if (transp) {
+    const navn = transp[1].trim().replace(/[,.]$/, "");
+    fund.push(nytFund("transportoer-navn", "parter", "Transportørens/speditørens navn", navn,
+      findSignal(new RegExp(escapeRegex(transp[0])), tekst)?.citat, `Fundet ud fra formuleringen "${transp[0].trim()}" — bekræft selv at navnet er korrekt.`));
+  }
+
+  return fund;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function klassificerCase(tekst) {
   const fund = [];
   const checklist = [];
+
+  fund.push(...udtraekParter(tekst));
 
   // --- TRIN 1: Køberet eller transportret? ---
   const koeberetSignal = findSignal(/sælger|køber|levering|risikoens overgang|mangel|reklamation/i, tekst);
@@ -83,19 +164,24 @@ function klassificerCase(tekst) {
     if (lande.saer.length > 0) {
       fund.push(nytFund("kbl-groenland", "lovvalg-koeb", "Købeloven (ikke CISG)", "Købeloven",
         landeCitat(lande.saer), `Grønland/Færøerne nævnt — disse anses IKKE for kontraherende stater efter CISG art. 93 stk. 3, selvom handlen er international.`,
-        ["Art. 93", "§17"]));
+        ["CISG:Art. 93", "KBL:§17"]));
     } else if (lande.andre.length > 0) {
       fund.push(nytFund("cisg", "lovvalg-koeb", "CISG (kandidat)", "CISG",
         landeCitat(lande.andre), `Et ikke-nordisk land er nævnt i teksten (${lande.andre.slice(0,2).join(", ")}) — bekræft selv at det faktisk er PARTERNES hjemland (og ikke bare fx et leveringssted/en havn), og at mindst én af parterne er i en kontraherende CISG-stat.`,
-        ["Art. 1", "Art. 66-70"]));
+        ["CISG:Art. 1", "CISG:Art. 66-70"]));
     } else if (lande.nordisk.length > 0) {
       fund.push(nytFund("kbl-nordisk", "lovvalg-koeb", "Købeloven (nordisk forbehold)", "Købeloven",
         landeCitat(lande.nordisk), "Kun nordiske lande nævnt ud over Danmark — det nordiske forbehold (CISG art. 94) betyder at Købeloven bruges i stedet for CISG.",
-        ["Art. 94", "§17"]));
+        ["CISG:Art. 94", "KBL:§17"]));
     } else {
       fund.push(nytFund("kbl-national", "lovvalg-koeb", "Købeloven (national handel)", "Købeloven",
         null, "Ingen international dimension fundet i teksten — rent nationalt køb er altid omfattet af Købeloven, aldrig CISG.",
-        ["§17", "§24"]));
+        ["KBL:§17", "KBL:§24"]));
+    }
+
+    if (lande.byGaet.length > 0) {
+      checklist.push({ tekst: "Landegenkendelse ud fra bynavne", status: "mangler",
+        note: `Byer i teksten er brugt til at gætte land: ${lande.byGaet.join(", ")}. Bekræft selv at gættet er korrekt.` });
     }
 
     const dkSelskabsform = tekst.match(/\b[A-ZÆØÅ][\wÆØÅæøå.&\- ]{1,40}\s(A\/S|ApS|I\/S|K\/S)\b/g) || [];
@@ -114,7 +200,7 @@ function klassificerCase(tekst) {
   if (soeSignal) {
     fund.push(nytFund("soeloven", "transportform", "Søtransport → Sølovens kapitel 13", "Sølovens kapitel 13",
       soeSignal.citat, "Skib/havn/rederi nævnt i teksten — søtransport er identificeret i kæden.",
-      ["§274", "§275", "§280"]));
+      ["SOELOVEN:§274", "SOELOVEN:§275", "SOELOVEN:§280"]));
   }
 
   if (landevejSignal) {
@@ -123,11 +209,11 @@ function klassificerCase(tekst) {
     if (antalForskelligeLande >= 2) {
       fund.push(nytFund("cmr", "transportform", "International landevejstransport → CMR-loven", "CMR-loven",
         landevejSignal.citat, "Lastbiltransport nævnt, og flere lande er identificeret i teksten — CMR-loven gælder kun international vejtransport (§1).",
-        ["§1", "§24", "§29"]));
+        ["CMR:§1", "CMR:§4", "CMR:§24", "CMR:§29"]));
     } else {
       fund.push(nytFund("nsab-national", "transportform", "National landevejstransport → NSAB direkte", "NSAB 2015 (ikke CMR-loven)",
         landevejSignal.citat, "Lastbiltransport nævnt, men der er IKKE fundet to forskellige lande i teksten — CMR-loven gælder kun international transport (§1). Bekræft selv om begge steder ligger i samme land.",
-        ["§21"]));
+        ["NSAB:§21"]));
       checklist.push({ tekst: "National eller international vejtransport?", status: "mangler", note: "Bekræft selv om afsendelses- og modtagelsessted ligger i samme land (→ NSAB) eller forskellige lande (→ CMR-loven)." });
     }
   }
@@ -145,7 +231,7 @@ function klassificerCase(tekst) {
   if (antalTransportformer >= 2) {
     fund.push(nytFund("multimodal", "transportform", "Multimodal transport — NSAB netværksklausul", "NSAB 2015 §2 (netværksklausulen)",
       null, "Flere transportformer i samme forløb. NSAB's netværksklausul (§2) betyder: kan skadesstedet lokaliseres til én transportform, bruges DEN lovs regler direkte; kan det ikke, bruges NSAB's egne grænser (§§15-21).",
-      ["§2", "§21"]));
+      ["NSAB:§2", "NSAB:§21"]));
   }
 
   if (antalTransportformer === 0 && transportretSignal) {
@@ -157,7 +243,7 @@ function klassificerCase(tekst) {
   if (nsabSignal) {
     fund.push(nytFund("nsab-vedtaget", "aftalegrundlag", "NSAB 2015 vedtaget", "NSAB 2015 som aftalegrundlag",
       nsabSignal.citat, "NSAB nævnt direkte i teksten — NSAB gælder kun hvis udtrykkeligt eller stiltiende vedtaget (§1). Netværksklausulen (§2) kan stadig sende sagen videre til søloven/CMR-loven.",
-      ["§1", "§2", "§3B"]));
+      ["NSAB:§1", "NSAB:§2", "NSAB:§3B"]));
   } else if (transportretSignal) {
     checklist.push({ tekst: "Er NSAB vedtaget mellem parterne?", status: "mangler", note: "Ingen direkte henvisning til NSAB fundet — tjek selv om det fremgår af tilbud/ordrebekræftelse/kutyme." });
   }
@@ -167,25 +253,31 @@ function klassificerCase(tekst) {
   if (dyrSignal) {
     fund.push(nytFund("levende-dyr", "specialflag", "Levende dyr", "Særlig fritagelsesregel kan være i spil",
       dyrSignal.citat, "Levende dyr transporteret — tjek Sølovens §277 / CMR-lovens §25 stk. 1 litra f. Fritagelsen kræver at transportøren har fulgt givne instrukser; tekniske udstyrsfejl (fx svigtende vanding) tæller normalt IKKE som en 'særlig risiko ved levende dyr'.",
-      ["§277", "§25"]));
+      ["SOELOVEN:§277", "CMR:§25"]));
   }
   const koelSignal = findSignal(/køl(?:e|ing)?|frost|temperatur|kølekæde/i, tekst);
   if (koelSignal) {
     fund.push(nytFund("koel-frost", "specialflag", "Køl-/frostgods", "Skærpet krav til transportøren",
       koelSignal.citat, "Temperaturfølsomt gods — CMR §25 stk. 3: transportøren mister normalt retten til at påberåbe godsets-egen-beskaffenhed-fritagelsen, medmindre køleudstyret var korrekt vedligeholdt og brugt.",
-      ["§25"]));
+      ["CMR:§25"]));
   }
   const aabenSignal = findSignal(/åben trailer|åbent køretøj|uden presenning/i, tekst);
   if (aabenSignal) {
     fund.push(nytFund("aaben-trailer", "specialflag", "Åben trailer/uden presenning", "Kan give fritagelse for transportøren",
       aabenSignal.citat, "CMR §25 litra a fritager kun, hvis den åbne transportform var UDTRYKKELIGT aftalt og optaget i fragtbrevet.",
-      ["§25"]));
+      ["CMR:§25"]));
   }
   const farligtSignal = findSignal(/farligt gods|samlæs(?:ning|set)/i, tekst);
   if (farligtSignal) {
     fund.push(nytFund("farligt-gods", "specialflag", "Farligt gods / samlæsning", "Afsenderens oplysningspligt",
-      farligtSignal.citat, "Tjek afsenderens oplysningspligt (CMR §13/Sølovens §257) og evt. ulovlig samlæsning som selvstændig ansvarsgrund for transportøren.",
-      ["§13"]));
+      farligtSignal.citat, "Tjek afsenderens oplysningspligt (CMR §13/Sølovens §255-261) og evt. ulovlig samlæsning som selvstændig ansvarsgrund for transportøren.",
+      ["CMR:§13", "SOELOVEN:§255-261"]));
+  }
+  const grovUagtsomhedSignal = findSignal(/for stærkt|for hurtigt|høj(?:e)? fart|helvedes fart|ignorer\w*|uden hensyn|bevidst|stresset|irriteret/i, tekst);
+  if (grovUagtsomhedSignal) {
+    fund.push(nytFund("mulig-grov-uagtsomhed", "specialflag", "Mulig grov uagtsomhed", "Adfærd der kan pege på grov uagtsomhed",
+      grovUagtsomhedSignal.citat, "Teksten beskriver en adfærd der kan være relevant for spørgsmålet om ansvarsgennembrud — men det er fortsat et konkret bevisspørgsmål, ikke noget der er bevist i sig selv.",
+      []));
   }
 
   // --- Respekter eksplicitte afgrænsninger i opgaveteksten ---

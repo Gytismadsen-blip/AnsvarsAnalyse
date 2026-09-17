@@ -11,6 +11,7 @@ let state = {
 };
 
 const GRUPPE_OVERSKRIFT = {
+  "parter": "Hvem er parterne?",
   "omraade": "Køberet eller transportret?",
   "lovvalg-koeb": "CISG eller Købeloven?",
   "transportform": "Hvilken transportlov gælder?",
@@ -18,7 +19,7 @@ const GRUPPE_OVERSKRIFT = {
   "specialflag": "Særlige forhold"
 };
 
-const GRUPPE_RAEKKEFOELGE = ["omraade", "lovvalg-koeb", "transportform", "aftalegrundlag", "specialflag"];
+const GRUPPE_RAEKKEFOELGE = ["parter", "omraade", "lovvalg-koeb", "transportform", "aftalegrundlag", "specialflag"];
 
 const LOV_OPTIONS = [
   { value: "SOELOVEN", label: "Sølovens kapitel 13" },
@@ -26,11 +27,12 @@ const LOV_OPTIONS = [
   { value: "NSAB", label: "NSAB 2015" }
 ];
 
-const ANSVAR_TEKST = {
-  SOELOVEN: "Ansvaret vurderes efter Sølovens kapitel 13 — transportøren har et præsumptionsansvar (§275), medmindre en fritagelsesgrund kan bevises (§276-277).",
-  CMR: "Ansvaret vurderes efter CMR-loven — fragtføreren hæfter for bortkomst, beskadigelse og forsinkelse (§24), medmindre en særlig fritagelsesgrund i §25 kan godtgøres.",
-  NSAB: "Ansvaret vurderes efter NSAB 2015 — speditøren skal godtgøre fornøden omhu (§6), og hæfter for egne og antagne undertransportørers fejl (§3B)."
-};
+function kortParagrafLabel(qualificeretNoegle) {
+  if (!qualificeretNoegle.includes(":")) return qualificeretNoegle;
+  const [lovKey, noegle] = qualificeretNoegle.split(":");
+  const kort = { KBL: "KBL", CISG: "CISG", SOELOVEN: "SL", CMR: "CMR", NSAB: "NSAB" };
+  return `${kort[lovKey] || lovKey} ${noegle}`;
+}
 
 function escapeHtml(tekst) {
   const div = document.createElement("div");
@@ -155,7 +157,7 @@ function renderFund() {
 
   state.fund.forEach(f => {
     const badges = (f.paragraffer || [])
-      .map(p => `<span class="badge-ok text-xs px-2 py-0.5 rounded-full">${escapeHtml(p)}</span>`)
+      .map(p => `<span class="badge-ok text-xs px-2 py-0.5 rounded-full">${escapeHtml(kortParagrafLabel(p))}</span>`)
       .join(" ");
 
     const kort = document.createElement("div");
@@ -232,7 +234,7 @@ function renderLovvalg() {
 function renderAnsvar() {
   const hovedlov = bestemHovedlov(state.fund);
   const grundlagBox = document.getElementById("ansvarGrundlag");
-  grundlagBox.innerHTML = `<p>${escapeHtml(ANSVAR_TEKST[hovedlov] || "Vælg og godkend fund på fane 1 og 2 først.")}</p>`;
+  grundlagBox.innerHTML = `<p>${escapeHtml(ANSVARSGRUNDLAG_TEKST[hovedlov] || "Vælg og godkend fund på fane 1 og 2 først.")}</p>`;
 
   renderBeregningForm(hovedlov);
 
@@ -260,19 +262,20 @@ function renderBeregningForm(hovedlov) {
     </div>
     <div>
       <label class="block text-gray-400 mb-1">Vægt (kg)</label>
-      <input type="number" id="inputVaegt" value="${gemte.vaegtKg != null ? gemte.vaegtKg : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
+      <input type="number" id="inputVaegt" min="0" step="any" value="${gemte.vaegtKg != null ? gemte.vaegtKg : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
     </div>
     <div>
       <label class="block text-gray-400 mb-1">Antal kolli (valgfrit)</label>
-      <input type="number" id="inputKolli" value="${gemte.antalKolli ? gemte.antalKolli : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
+      <input type="number" id="inputKolli" min="0" step="any" value="${gemte.antalKolli ? gemte.antalKolli : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
     </div>
     <div>
       <label class="block text-gray-400 mb-1">Faktisk tab (kr.)</label>
-      <input type="number" id="inputTab" value="${gemte.faktiskTab != null ? gemte.faktiskTab : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
+      <input type="number" id="inputTab" min="0" step="any" value="${gemte.faktiskTab != null ? gemte.faktiskTab : ""}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
     </div>
-    <div class="col-span-2 flex items-center gap-2">
-      <input type="checkbox" id="inputGennembrud" ${gemte.gennembrud ? "checked" : ""}>
-      <label for="inputGennembrud" class="text-gray-400">Mistanke om forsæt/grov uagtsomhed (ansvarsgennembrud)</label>
+    <div class="col-span-2">
+      <label class="block text-gray-400 mb-1">SDR-kurs (kr. pr. SDR)</label>
+      <input type="number" id="inputSdrKurs" min="0" step="any" value="${gemte.sdrKurs != null ? gemte.sdrKurs : SDR_KURS}" class="w-full bg-gray-950 border border-gray-700 rounded-lg p-2">
+      <p class="text-xs text-gray-500 mt-1">${escapeHtml(SDR_KURS_KILDE)}</p>
     </div>
     <div class="col-span-2">
       <button id="btnBeregn" class="btn-primary w-full py-2 rounded-lg font-medium">Beregn erstatning</button>
@@ -284,16 +287,23 @@ function renderBeregningForm(hovedlov) {
 
 function koerBeregning() {
   const lov = document.getElementById("inputLov").value;
-  const vaegtKg = parseFloat(document.getElementById("inputVaegt").value) || 0;
+  const vaegtKg = parseFloat(document.getElementById("inputVaegt").value);
   const antalKolliRaw = document.getElementById("inputKolli").value;
   const antalKolli = antalKolliRaw ? parseFloat(antalKolliRaw) : 0;
-  const faktiskTab = parseFloat(document.getElementById("inputTab").value) || 0;
-  const gennembrud = document.getElementById("inputGennembrud").checked;
+  const faktiskTab = parseFloat(document.getElementById("inputTab").value);
+  const sdrKurs = parseFloat(document.getElementById("inputSdrKurs").value) || SDR_KURS;
 
-  state.beregningInputs = { lov, vaegtKg, antalKolli, faktiskTab, gennembrud };
-  state.beregning = beregnErstatning({ lov, vaegtKg, antalKolli, faktiskTab, gennembrud });
-  state.konklusion = null;
-  renderBeregningResultat(state.beregning);
+  state.beregningInputs = { lov, vaegtKg, antalKolli, faktiskTab, sdrKurs };
+
+  const resultatBox = document.getElementById("beregningResultat");
+  try {
+    state.beregning = beregnErstatning({ lov, vaegtKg, antalKolli, faktiskTab, sdrKurs });
+    state.konklusion = null;
+    renderBeregningResultat(state.beregning);
+  } catch (err) {
+    state.beregning = null;
+    resultatBox.innerHTML = `<p class="text-sm text-amber-300">${escapeHtml(err.message)}</p>`;
+  }
 }
 
 function renderBeregningResultat(res) {
@@ -302,17 +312,22 @@ function renderBeregningResultat(res) {
 
   box.innerHTML = `
     <h3 class="font-bold text-white mb-2">${escapeHtml(res.metodeNavn)}</h3>
-    <div class="grid grid-cols-2 gap-3 mb-3">
+    <div class="grid grid-cols-3 gap-3 mb-3">
       <div class="card p-3 text-center">
         <div class="text-xs text-gray-500">Lovens grænse</div>
-        <div class="text-lg font-bold text-white">${res.graenseKr !== null ? formatKr(res.graenseKr) : "Ingen grænse"}</div>
+        <div class="text-lg font-bold text-white">${formatKr(res.graenseKr)}</div>
       </div>
       <div class="card p-3 text-center">
-        <div class="text-xs text-gray-500">Erstatning</div>
-        <div class="text-lg font-bold text-white">${formatKr(res.erstatningKr)}</div>
+        <div class="text-xs text-gray-500">Erstatning (normalt ansvar)</div>
+        <div class="text-lg font-bold text-white">${formatKr(res.normalErstatningKr)}</div>
+        <div class="text-xs text-gray-500">ca. ${res.normalDaekketProcent}% af tabet</div>
+      </div>
+      <div class="card p-3 text-center border-amber-800">
+        <div class="text-xs text-amber-400">Erstatning (hvis ansvarsgennembrud)</div>
+        <div class="text-lg font-bold text-amber-300">${formatKr(res.fuldErstatningKr)}</div>
+        <div class="text-xs text-gray-500">kræver bevist forsæt/grov uagtsomhed</div>
       </div>
     </div>
-    ${res.daekketProcent !== null ? `<p class="text-sm text-gray-400 mb-3">Dækker ca. ${res.daekketProcent}% af det opgjorte tab.</p>` : ""}
     <h4 class="font-semibold text-white mb-1">Sådan er det regnet</h4>
     <ol class="list-decimal list-inside text-sm text-gray-400 space-y-1">${trinHtml}</ol>
   `;
@@ -342,8 +357,8 @@ function renderKonklusion() {
   if (resultat.paragraffer.length > 0) {
     paragrafBox.classList.remove("hidden");
     paragrafListe.innerHTML = resultat.paragraffer.map(p => {
-      const forklaring = slaaParagrafOp(p);
-      return `<div>${escapeHtml(p)}${forklaring ? " — " + escapeHtml(forklaring) : ""}</div>`;
+      const opslag = slaaParagrafOp(p);
+      return `<div><strong class="text-white">${escapeHtml(opslag.visning)}</strong>${opslag.forklaring ? " — " + escapeHtml(opslag.forklaring) : ""}</div>`;
     }).join("");
   } else {
     paragrafBox.classList.add("hidden");
@@ -351,11 +366,16 @@ function renderKonklusion() {
   }
 }
 
-function slaaParagrafOp(paragrafNoegle) {
-  for (const lovKey in LOVDATA) {
-    if (LOVDATA[lovKey].paragraffer[paragrafNoegle]) return LOVDATA[lovKey].paragraffer[paragrafNoegle];
+// Paragraffer er gemt som "LOVKODE:§X" (fx "CMR:§24") netop for at undgå at blande
+// paragraffer med samme nummer fra forskellige love sammen (Købeloven og CMR-loven
+// har begge en §24, med helt forskelligt indhold).
+function slaaParagrafOp(qualificeretNoegle) {
+  const [lovKey, noegle] = qualificeretNoegle.includes(":") ? qualificeretNoegle.split(":") : [null, qualificeretNoegle];
+  const lov = lovKey && LOVDATA[lovKey];
+  if (lov && lov.paragraffer[noegle]) {
+    return { visning: `${lov.navn}, ${noegle}`, forklaring: lov.paragraffer[noegle] };
   }
-  return null;
+  return { visning: noegle, forklaring: null };
 }
 
 function wireKonklusion() {

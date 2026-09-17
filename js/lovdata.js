@@ -48,6 +48,7 @@ const LOVDATA = {
       "§252": "Geografisk anvendelsesområde.",
       "§253": "Gælder ikke certepartier (befragtning).",
       "§254": "Præceptivitet — ufravigeligt til skade for varesiden.",
+      "§255-261": "Levering af gods til transportøren, herunder afsenderens oplysningspligt om godsets art (fx farligt gods).",
       "§262": "Transportørens omsorgspligt og sødygtighed.",
       "§263": "Dækslast — kun hvis aftalt/sædvane/lov.",
       "§274": "Varetægtsperioden — fra modtagelse til udlevering.",
@@ -108,4 +109,8 @@ const LOVDATA = {
   }
 };
 
-const SDR_KURS = 9.25; // ca. kr. pr. SDR, undervisningsstandard
+// Standardkurs til undervisningsbrug — IKKE en officiel dagskurs. Efter fx CMR-lovens §29
+// skal omregningen reelt ske efter kursen på domsdagen (eller en dato parterne aftaler).
+// Brugeren kan selv indtaste en anden kurs i beregningsformularen.
+const SDR_KURS = 9.25;
+const SDR_KURS_KILDE = "Standardkurs til undervisningsbrug (ikke en dokumenteret dagskurs) — indtast selv den faktiske kurs på den relevante dato, hvis du kender den.";
